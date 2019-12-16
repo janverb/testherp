@@ -1,0 +1,9 @@
+stages:
+  - test
+
+before_script:
+  - python -m pip install --user tox
+
+python2:
+  stage: test
+  script: ~/.local/bin/tox -e py27

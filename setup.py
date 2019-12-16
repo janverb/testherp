@@ -22,4 +22,5 @@ setuptools.setup(
         "Topic :: Software Development",
         "Topic :: Software Development :: Testing",
     ],
+    install_requires=["psycopg2-binary"],
 )

@@ -1,0 +1,4 @@
+#!/bin/sh
+printf '%s\n' "$*" >> "$0.called"
+env >> "$0.called"
+exit ${TEST_TESTHERP_EXIT_STATUS:-0}
