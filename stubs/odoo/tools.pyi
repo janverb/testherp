@@ -1,3 +1,3 @@
 from typing import Dict, Union
 
-config: Dict[str, Union[str, bool]]
+config: Dict[str, Union[str, bool, int]]

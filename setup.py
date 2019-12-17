@@ -1,4 +1,22 @@
+import pkg_resources
 import setuptools
+
+
+def has_distribution(package):
+    try:
+        pkg_resources.get_distribution(package)
+    except pkg_resources.DistributionNotFound:
+        return False
+    else:
+        return True
+
+
+# Let installers avoid building psycopg2, e.g. in CI
+# Warning: this takes effect when building a wheel, not when installing it
+if not has_distribution("psycopg2") and has_distribution("psycopg2-binary"):
+    dependencies = ["psycopg2-binary"]
+else:
+    dependencies = ["psycopg2"]
 
 setuptools.setup(
     name="testherp",
@@ -12,7 +30,7 @@ setuptools.setup(
     classifiers=[
         "Framework :: Odoo",
         "Framework :: Buildout",
-        "Development Status :: 2 - Pre-Alpha",
+        "Development Status :: 3 - Alpha",
         "License :: OSI Approved :: GNU Affero General Public License v3 or "
         "later (AGPLv3+)",
         "Intended Audience :: Developers",
@@ -22,5 +40,5 @@ setuptools.setup(
         "Topic :: Software Development",
         "Topic :: Software Development :: Testing",
     ],
-    install_requires=["psycopg2-binary"],
+    install_requires=dependencies,
 )

@@ -18,7 +18,7 @@
 # - don't print garbage on KeyboardInterrupt
 # - adopt test_tags format?
 # - use warnings or print to stderr?
-# - support unittest flags (--catch, --buffer, --locals)
+# - support unittest flags (--catch, --locals)
 # - write more tests for testherp itself
 # - document .testherp file
 # - make --quiet suppress most of testherp's own output
@@ -27,6 +27,8 @@
 # - --nuke to remove .testherp and drop the seed databases in it
 #   - exclusive from other options?
 # - search upward for buildout directory
+# - detect when databases don't exist
+# - handle data_dir?
 
 from __future__ import print_function
 
@@ -37,6 +39,7 @@ import csv
 import functools
 import importlib
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -129,6 +132,10 @@ def _quote(identifier):
     return '"{}"'.format(identifier.replace('"', '""'))
 
 
+class TestherpError(Exception):
+    pass
+
+
 class Spec(object):
     """A test specifier of the form addon[.module[.method]]."""
 
@@ -136,7 +143,7 @@ class Spec(object):
         # type: (str) -> None
         parts = specstr.split(".")
         if not 1 <= len(parts) <= 3 or not all(parts):
-            raise ValueError("Malformed test spec {!r}".format(specstr))
+            raise TestherpError("Malformed test spec {!r}".format(specstr))
         self.addon = parts[0]
         self.module = parts[1] if len(parts) >= 2 else None
         self.method = parts[2] if len(parts) >= 3 else None
@@ -242,6 +249,9 @@ class TestManager(object):
         # This makes it less likely Odoo starts running tests itself
         odoo.tools.config["test_tags"] = "-"
 
+        # Avoid conflict with other instances
+        odoo.tools.config["http_port"] = random.randint(30000, 50000)
+
         # odoo.cli.server.start() does this, at least one test depends on it
         csv.field_size_limit(500 * 1024 * 1024)
 
@@ -268,7 +278,10 @@ class TestManager(object):
         suite = unittest.TestSuite(testcases)
         verbosity = int(os.environ.get("TESTHERP_VERBOSITY") or "1")
         failfast = bool(os.environ.get("TESTHERP_FAILFAST"))
-        runner = OdooTextTestRunner(verbosity=verbosity, failfast=failfast)
+        buffer = bool(os.environ.get("TESTHERP_BUFFER"))
+        runner = OdooTextTestRunner(
+            verbosity=verbosity, failfast=failfast, buffer=buffer
+        )
         with self.run_server():
             result = runner.run(suite)
             return min(len(result.errors) + len(result.failures), 255)
@@ -423,7 +436,7 @@ class ProcessManager(object):
         # type: (str, str) -> None
         self.base_dir = os.path.abspath(base_dir)
         if not os.path.isdir(self.base_dir):
-            raise ValueError("Directory {!r} does not exist".format(self.base_dir))
+            raise TestherpError("Directory {!r} does not exist".format(self.base_dir))
         self.python_odoo = os.path.join(self.base_dir, "bin/python_odoo")
         self.start_odoo = os.path.join(self.base_dir, "bin/start_odoo")
         self.odoo_cfg = os.path.join(self.base_dir, "etc/odoo.cfg")
@@ -431,7 +444,9 @@ class ProcessManager(object):
             os.path.isfile(fname)
             for fname in [self.python_odoo, self.start_odoo, self.odoo_cfg]
         ):
-            raise ValueError("{!r} is not a buildout directory".format(self.base_dir))
+            raise TestherpError(
+                "{!r} is not a buildout directory".format(self.base_dir)
+            )
 
         self.config = configparser.ConfigParser()
         self.config.read(self.odoo_cfg)
@@ -440,7 +455,7 @@ class ProcessManager(object):
 
         self.tests = SpecList.from_str(specs)
         if not self.tests:
-            raise ValueError("No tests given")
+            raise TestherpError("No tests given")
 
         self.state = State.read(self.base_dir)
 
@@ -515,8 +530,8 @@ class ProcessManager(object):
         self.state[addons] = dbname
         self.state.write(self.base_dir)
 
-    def run_test_process(self, keep, server, failfast, verbosity, debugger):
-        # type: (bool, bool, bool, int, t.Optional[str]) -> _Proc
+    def run_test_process(self, keep, server, failfast, buffer, verbosity, debugger):
+        # type: (bool, bool, bool, bool, int, t.Optional[str]) -> _Proc
         """Run an inferior process that executes the tests."""
         env = os.environ.copy()
         env["PYTHON_ODOO"] = "1"
@@ -527,6 +542,8 @@ class ProcessManager(object):
             env["TESTHERP_SERVER"] = "1"
         if failfast:
             env["TESTHERP_FAILFAST"] = "1"
+        if buffer:
+            env["TESTHERP_BUFFER"] = "1"
         with self.temp_db(keep=keep) as dbname:
             return self.run_process(
                 [self.python_odoo, __file__, dbname, str(self.tests)], env=env
@@ -545,7 +562,7 @@ class ProcessManager(object):
         try:
             self.create_db(dbname, seed=seed_db)
         except psycopg2.Error:
-            raise RuntimeError(
+            raise TestherpError(
                 "Can't create database from template, try running with --clean"
             )
         print("Created temporary database {}".format(dbname))
@@ -590,13 +607,15 @@ class ProcessManager(object):
                 [
                     self.start_odoo,
                     "--stop-after-init",
-                    "--database=" + dbname,
-                    "--config=" + config_file.name,
+                    "--database",
+                    dbname,
+                    "--config",
+                    config_file.name,
                 ]
                 + args
             )
             if proc.returncode:
-                raise RuntimeError("Odoo failed with code {}".format(proc.returncode))
+                raise TestherpError("Odoo failed with code {}".format(proc.returncode))
             return proc
 
     def run_process(self, argv, env=None):
@@ -629,6 +648,7 @@ def testherp(argv=sys.argv[1:]):
     toggle("-p", "--pdb", help="Launch pdb on failure or error")
     arg("-d", "--debugger", default=None, help="Launch a debugger on failure on error")
     toggle("-f", "--failfast", help="Stop on first fail or error")
+    toggle("-b", "--buffer", help="Buffer stdout and stderr during tests")
     arg("-C", "--directory", default=".", help="Buildout directory to use")
     toggle("-v", "--verbose", help="Verbose test output")
     toggle("-q", "--quiet", help="Minimal test output")
@@ -651,12 +671,12 @@ def testherp(argv=sys.argv[1:]):
         debugger=debugger,
         keep=args.keep,
         failfast=args.failfast,
+        buffer=args.buffer,
     )
 
 
 def main(argv=sys.argv[1:]):
     # type: (t.List[str]) -> int
-    # TODO: handle common exceptions in a user-friendly way
     if os.environ.get("PYTHON_ODOO"):
         assert len(sys.argv) == 3
         session_obj = session  # type: ignore  # noqa: F821
@@ -665,7 +685,11 @@ def main(argv=sys.argv[1:]):
         )
         return manager.run_tests()
     else:
-        return testherp(argv)
+        try:
+            return testherp(argv)
+        except TestherpError as err:
+            print("{}: error: {}".format(os.path.basename(sys.argv[0]), err))
+            return 1
 
 
 if __name__ == "__main__":

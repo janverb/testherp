@@ -10,7 +10,7 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 import testherp
 
-from testherp import ProcessManager, Spec, SpecList, State, _quote
+from testherp import ProcessManager, Spec, SpecList, State, TestherpError, _quote
 
 PY3 = sys.version_info >= (3, 0)
 
@@ -43,13 +43,13 @@ class TestTestherp(TestCase):
         for spec in a, b, c:
             self.assertEqual(spec, Spec(str(spec)))
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TestherpError):
             Spec("")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TestherpError):
             Spec(".")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TestherpError):
             Spec("foo..bar")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TestherpError):
             Spec("foo.bar.baz.qux")
 
     def test_speclist(self):
@@ -72,7 +72,7 @@ class TestTestherp(TestCase):
         for speclist in a, b, c:
             self.assertEqual(speclist, SpecList.from_str(str(speclist)))
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TestherpError):
             SpecList.from_str("foo,bar,foo.bar.baz.qux")
 
     def test_quoting(self):
@@ -121,11 +121,12 @@ class TestTestherp(TestCase):
                 keep=False,
                 server=False,
                 failfast=True,
+                buffer=False,
             )
             connect.return_value.cursor.assert_called_with()
             cursor = connect.return_value.cursor.return_value.__enter__.return_value
             self.assertIn(addons, manager.state)
-            self.assertTrue(len(manager.state) == 1)
+            self.assertEqual(len(manager.state), 1)
             self.assertEqual(State.read(base_dir), manager.state)
             seed_db = manager.state[addons]
             cursor.execute.assert_any_call('CREATE DATABASE "{}"'.format(seed_db))
@@ -139,7 +140,7 @@ class TestTestherp(TestCase):
                 py_odoo_args = f.readline().split()
                 py_odoo_env = set(f.readlines())
 
-            self.assertTrue(len(py_odoo_args) == 3)
+            self.assertEqual(len(py_odoo_args), 3)
             self.assertEqual(py_odoo_args[0], testherp.__file__)
             temp_db = py_odoo_args[1]
             self.assertEqual(py_odoo_args[2], "foo,bar.baz")
@@ -149,30 +150,31 @@ class TestTestherp(TestCase):
             self.assertIn("TESTHERP_DEBUGGER=pdb\n", py_odoo_env)
             self.assertIn("TESTHERP_FAILFAST=1\n", py_odoo_env)
             self.assertNotIn("TESTHERP_SERVER=1\n", py_odoo_env)
+            self.assertNotIn("TESTHERP_BUFFER=1\n", py_odoo_env)
 
             cursor.execute.assert_any_call(
                 'CREATE DATABASE "{}" WITH TEMPLATE "{}"'.format(temp_db, seed_db)
             )
             cursor.execute.assert_any_call('DROP DATABASE "{}"'.format(temp_db))
 
-            self.assertTrue(len(start_odoo_args) == 5)
+            self.assertEqual(len(start_odoo_args), 7)
             self.assertIn("bar,foo", start_odoo_args)
-            self.assertIn("--database={}".format(seed_db), start_odoo_args)
+            self.assertIn(seed_db, start_odoo_args)
 
     def test_buildout_directory_validation(self):
         with self.tempdir() as directory:
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TestherpError):
                 ProcessManager(os.path.join(directory, "fake"), "foo,bar.baz")
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TestherpError):
                 ProcessManager(directory, "foo,bar.baz")
 
     def test_empty_tests_error(self):
         with self.buildoutdir() as (directory, connect):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TestherpError):
                 ProcessManager(directory, "")
 
-            with self.assertRaises(ValueError):
+            with self.assertRaises(TestherpError):
                 ProcessManager(directory, ",")
 
     @contextmanager
