@@ -41,7 +41,6 @@ import importlib
 import os
 import random
 import signal
-import subprocess
 import sys
 import tempfile
 import threading
@@ -49,11 +48,14 @@ import types
 import unittest
 import uuid
 
+from subprocess import Popen
+
 # We only need psycopg2 in the controller process, but it's also available in
 # the Odoo process because Odoo uses it so no need to guard it
 import psycopg2
 
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from psycopg2.sql import Identifier, SQL
 
 PY3 = sys.version_info >= (3, 0)
 
@@ -73,11 +75,8 @@ if MYPY:
         t.Union[BaseException, None],
         t.Union[types.TracebackType, None],
     ]
-    _Proc = subprocess.Popen[bytes]
-    _StateDict = t.Dict[t.FrozenSet[str], str]
     _SpecList = t.List[Spec]  # noqa: F821
     _SpecTuple = t.Union[t.Tuple[str], t.Tuple[str, str], t.Tuple[str, str, str]]
-    _TestCase = unittest.TestCase
     if PY3:
         _Testable = t.Union[unittest.TestSuite, unittest.TestCase]
     else:
@@ -88,16 +87,15 @@ else:
     def cast(typ, val):
         return val
 
-    _StateDict = dict
     _SpecList = list
 
 if MYPY and not PY3:
     # The Python 2 unittest typeshed is incomplete
-    _TextTestResult = t.Any
-    _TextTestRunner = t.Any
+    TextTestResult = t.Any
+    TextTestRunner = t.Any
 else:
-    _TextTestResult = unittest.TextTestResult
-    _TextTestRunner = unittest.TextTestRunner
+    from unittest import TextTestResult
+    from unittest import TextTestRunner
 
 
 if MYPY:
@@ -196,7 +194,7 @@ class SpecList(_SpecList):
         return frozenset(spec.addon for spec in self)
 
     def unwrap_testcases(self, suite):
-        # type: (_Testable) -> t.Iterator[_TestCase]
+        # type: (_Testable) -> t.Iterator[unittest.TestCase]
         """Recursively unwrap test suites into test cases."""
         if isinstance(suite, unittest.TestCase):
             yield suite
@@ -207,7 +205,7 @@ class SpecList(_SpecList):
                     yield case
 
     def testcases_for_module(self, module):
-        # type: (types.ModuleType) -> t.Iterator[_TestCase]
+        # type: (types.ModuleType) -> t.Iterator[unittest.TestCase]
         """Get all test cases for a python module."""
         return self.unwrap_testcases(unittest.TestLoader().loadTestsFromModule(module))
 
@@ -284,7 +282,7 @@ class TestManager(object):
         )
         with self.run_server():
             result = runner.run(suite)
-            return min(len(result.errors) + len(result.failures), 255)
+            return min(len(result.errors) + len(result.failures), 125)
 
     def mark_skip(self, case):
         # type: (MarkedTestCase) -> None
@@ -349,22 +347,22 @@ class TestManager(object):
                 server.stop()
 
 
-class OdooTextTestResult(_TextTestResult):
+class OdooTextTestResult(TextTestResult):
     """Format tests as Specs and launch a debugger when appropriate."""
 
     def getDescription(self, test):
-        # type: (_TestCase) -> str
+        # type: (unittest.TestCase) -> str
         if hasattr(test, "_odooName"):
             return ".".join(test._odooName)  # type: ignore
         return super(OdooTextTestResult, self).getDescription(test)
 
     def addError(self, test, err):
-        # type: (_TestCase, _Err) -> None
+        # type: (unittest.TestCase, _Err) -> None
         super(OdooTextTestResult, self).addError(test, err)
         self.perhapsPdb(err)
 
     def addFailure(self, test, err):
-        # type: (_TestCase, _Err) -> None
+        # type: (unittest.TestCase, _Err) -> None
         super(OdooTextTestResult, self).addFailure(test, err)
         self.perhapsPdb(err)
 
@@ -382,51 +380,73 @@ class OdooTextTestResult(_TextTestResult):
             dbg.post_mortem(exc_tb)
 
     def startTest(self, test):
-        # type: (_TestCase) -> None
+        # type: (unittest.TestCase) -> None
         threading.currentThread().testing = True  # type: ignore
         odoo.tools.config["test_enable"] = True
         super(OdooTextTestResult, self).startTest(test)
 
     def stopTest(self, test):
-        # type: (_TestCase) -> None
+        # type: (unittest.TestCase) -> None
         threading.currentThread().testing = False  # type: ignore
         odoo.tools.config["test_enable"] = False
         super(OdooTextTestResult, self).stopTest(test)
 
 
-class OdooTextTestRunner(_TextTestRunner):
+class OdooTextTestRunner(TextTestRunner):
     resultclass = OdooTextTestResult
 
 
-class State(_StateDict):
+class State(object):
     """The registry of seed databases."""
 
-    @classmethod
-    def read(cls, directory):
-        # type: (str) -> State
-        fname = os.path.join(directory, ".testherp")
-        state = cls()
-        if not os.path.isfile(fname):
-            return state
-        with open(fname) as f:
+    def __init__(self, directory):
+        # type: (str) -> None
+        self.fname = os.path.join(directory, ".testherp")
+        self.state = {}  # type: t.Dict[t.FrozenSet[str], str]
+        if not os.path.isfile(self.fname):
+            return
+        with open(self.fname) as f:
             for line in f:
                 line = line.strip()
-                if not line:
+                if not line or line.startswith("#"):
                     continue
                 key, value = line.split("=")
-                state[frozenset(key.strip().split(","))] = value.strip()
-        return state
+                addons = frozenset(
+                    filter(None, (addon.strip() for addon in key.split(",")))
+                )
+                self.state[addons] = value.strip()
 
-    def write(self, directory):
-        # type: (str) -> None
-        entries = [
-            (",".join(sorted(addons)), dbname) for addons, dbname in self.items()
-        ]
-        # Fewest addons first, then alphabetical
-        entries.sort(key=lambda entry: (entry[0].count(","), entry[0]))
-        with open(os.path.join(directory, ".testherp"), "w") as f:
-            for entry in entries:
-                print("{} = {}".format(*entry), file=f)
+    def __getitem__(self, addons):
+        # type: (t.FrozenSet[str]) -> str
+        return self.state[addons]
+
+    def __contains__(self, addons):
+        # type: (t.FrozenSet[str]) -> bool
+        return addons in self.state
+
+    def __setitem__(self, addons, dbname):
+        # type: (t.FrozenSet[str], str) -> None
+        if addons in self.state:
+            raise ValueError(
+                "An entry for {} already exists".format(", ".join(sorted(addons)))
+            )
+        if any(char.isspace() for char in dbname) or len(dbname) > 64:
+            raise ValueError("{!r} is not a safe database name".format(dbname))
+        with open(self.fname, "a") as f:
+            f.write("{} = {}\n".format(",".join(sorted(addons)), dbname))
+        self.state[addons] = dbname
+
+    def __len__(self):
+        # type: () -> int
+        return len(self.state)
+
+    def __eq__(self, other):
+        # type: (object) -> bool
+        return (
+            isinstance(other, State)
+            and self.fname == other.fname
+            and self.state == other.state
+        )
 
 
 class ProcessManager(object):
@@ -457,7 +477,7 @@ class ProcessManager(object):
         if not self.tests:
             raise TestherpError("No tests given")
 
-        self.state = State.read(self.base_dir)
+        self.state = State(self.base_dir)
 
     def connect_db(self):
         # type: () -> psycopg2.extensions.connection
@@ -481,18 +501,18 @@ class ProcessManager(object):
         if seed:
             with self.database.cursor() as cr:
                 cr.execute(
-                    "CREATE DATABASE {} WITH TEMPLATE {}".format(
-                        _quote(dbname), _quote(seed)
+                    SQL("CREATE DATABASE {} WITH TEMPLATE {}").format(
+                        Identifier(dbname), Identifier(seed)
                     )
                 )
         else:
             with self.database.cursor() as cr:
-                cr.execute("CREATE DATABASE {}".format(_quote(dbname)))
+                cr.execute(SQL("CREATE DATABASE {}").format(Identifier(dbname)))
 
     def drop_db(self, dbname):
         # type: (str) -> None
         with self.database.cursor() as cr:
-            cr.execute("DROP DATABASE {}".format(_quote(dbname)))
+            cr.execute(SQL("DROP DATABASE {}").format(Identifier(dbname)))
 
     def run_tests(self, clean, update, verbosity, debugger, **flags):
         # type: (bool, bool, int, str, bool) -> int
@@ -505,21 +525,23 @@ class ProcessManager(object):
         """Ensure that a seed database exists for the current set of tests."""
         addons = self.tests.addons()
         if addons in self.state:
-            old_dbname = self.state[addons]
+            dbname = self.state[addons]
             if clean:
                 try:
-                    self.drop_db(old_dbname)
+                    self.drop_db(dbname)
                 except psycopg2.Error:
-                    print("Could not delete {}".format(old_dbname))
+                    print("Could not delete {}".format(dbname))
                 else:
-                    print("Deleted old database {}".format(old_dbname))
+                    print("Deleted old database {}".format(dbname))
             elif update:
-                print("Updating {}".format(", ".join(sorted(addons))))
-                self.run_odoo(old_dbname, ["-u", ",".join(addons)])
+                print("Updating {} in {}".format(", ".join(sorted(addons)), dbname))
+                self.run_odoo(dbname, ["-u", ",".join(addons)])
                 return
             else:
                 return
-        dbname = "testherp-seed-{}".format(uuid.uuid4())
+        else:
+            dbname = "testherp-seed-{}".format(uuid.uuid4())
+            self.state[addons] = dbname
         self.create_db(dbname)
         print(
             "Created seed database {} for {}".format(dbname, ", ".join(sorted(addons)))
@@ -527,11 +549,9 @@ class ProcessManager(object):
         print("Installing Odoo (this may take a while)")
         self.run_odoo(dbname, ["-i", ",".join(sorted(addons))])
         print("Finished installing Odoo")
-        self.state[addons] = dbname
-        self.state.write(self.base_dir)
 
     def run_test_process(self, keep, server, failfast, buffer, verbosity, debugger):
-        # type: (bool, bool, bool, bool, int, t.Optional[str]) -> _Proc
+        # type: (bool, bool, bool, bool, int, t.Optional[str]) -> Popen[bytes]
         """Run an inferior process that executes the tests."""
         env = os.environ.copy()
         env["PYTHON_ODOO"] = "1"
@@ -578,7 +598,7 @@ class ProcessManager(object):
                     print("Could not delete {}".format(dbname))
 
     def run_odoo(self, dbname, args, loglevel="warn"):
-        # type: (str, t.List[str], str) -> _Proc
+        # type: (str, t.List[str], str) -> Popen[bytes]
         """Run Odoo without the baggage of the full etc/odoo.cfg."""
         with tempfile.NamedTemporaryFile(suffix=".cfg", mode="w") as config_file:
             # We use a temporary config file instead of passing these as flags
@@ -619,9 +639,9 @@ class ProcessManager(object):
             return proc
 
     def run_process(self, argv, env=None):
-        # type: (t.List[str], t.Optional[t.Dict[str, str]]) -> _Proc
+        # type: (t.List[str], t.Optional[t.Dict[str, str]]) -> Popen[bytes]
         """Run an inferior process to completion."""
-        proc = subprocess.Popen(argv, env=env)
+        proc = Popen(argv, env=env)
         try:
             proc.wait()
         except KeyboardInterrupt:

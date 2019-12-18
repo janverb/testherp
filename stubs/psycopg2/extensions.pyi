@@ -1,4 +1,6 @@
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
+
+from psycopg2 import sql
 
 ISOLATION_LEVEL_AUTOCOMMIT = 1
 
@@ -13,7 +15,10 @@ class cursor:
     rowcount: int
     rownumber: int
     def close(self) -> None: ...
-    def execute(self, query: str, vars: Optional[Sequence[str]] = None) -> None: ...
+    # .execute() can take a str too, but let's enforce the typed interface
+    def execute(
+        self, query: sql.Composable, vars: Optional[Sequence[Any]] = None
+    ) -> None: ...
     def fetchone(self) -> Tuple[Any, ...]: ...
     def fetchall(self) -> List[Tuple[Any, ...]]: ...
     def __enter__(self) -> cursor: ...

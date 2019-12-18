@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from unittest import TestCase
 
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from psycopg2.sql import Identifier, SQL
 
 import testherp
 
@@ -83,19 +84,62 @@ class TestTestherp(TestCase):
         with self.tempdir() as directory:
             fname = os.path.join(directory, ".testherp")
 
-            state = State.read(directory)
-            self.assertEqual(state, {})
-            state[frozenset({"baz", "bar"})] = "a"
+            state = State(directory)
+            self.assertEqual(state.state, {})
             state[frozenset({"foo"})] = "b"
+            state[frozenset({"baz", "bar"})] = "a"
 
-            state.write(directory)
             self.assertTrue(os.path.isfile(fname))
             with open(fname) as f:
                 contents = f.read()
-            self.assertEqual(contents, "foo = b\nbar,baz = a\n")
+            self.assertEqual(
+                contents,
+                """foo = b
+bar,baz = a
+""",
+            )
 
-            state2 = State.read(directory)
+            state2 = State(directory)
             self.assertEqual(state, state2)
+
+            with open(fname, "a") as f:
+                f.write("# a comment\n")
+                f.write(" qux, baz =  foobar\n")
+
+            state3 = State(directory)
+            self.assertEqual(
+                state3.state,
+                {
+                    frozenset({"foo"}): "b",
+                    frozenset({"bar", "baz"}): "a",
+                    frozenset({"qux", "baz"}): "foobar",
+                },
+            )
+            self.assertNotEqual(state, state3)
+            self.assertNotEqual(state2, state3)
+
+            with self.assertRaises(ValueError):
+                # No rewriting
+                state3[frozenset({"foo"})] = "c"
+            with self.assertRaises(ValueError):
+                # No whitespace
+                state3[frozenset({"quxbar"})] = "d "
+            with self.assertRaises(ValueError):
+                # No long identifiers
+                state3[frozenset({"quxbar"})] = "e" * 100
+
+            state3[frozenset({"barqux"})] = "f"
+            with open(fname) as f:
+                contents = f.read()
+            self.assertEqual(
+                contents,
+                """foo = b
+bar,baz = a
+# a comment
+ qux, baz =  foobar
+barqux = f
+""",
+            )
 
     def test_process_manager(self):
         with self.buildoutdir() as (base_dir, connect):
@@ -106,7 +150,7 @@ class TestTestherp(TestCase):
             manager = ProcessManager(base_dir, "foo,bar.baz")
             self.assertEqual(manager.config.get("options", "db_user"), "test_user")
             self.assertEqual(manager.tests, [Spec("foo"), Spec("bar.baz")])
-            self.assertEqual(manager.state, {})
+            self.assertEqual(manager.state.state, {})
             connect.assert_called_once_with(
                 host=None, port=None, user="test_user", password=None
             )
@@ -127,9 +171,11 @@ class TestTestherp(TestCase):
             cursor = connect.return_value.cursor.return_value.__enter__.return_value
             self.assertIn(addons, manager.state)
             self.assertEqual(len(manager.state), 1)
-            self.assertEqual(State.read(base_dir), manager.state)
+            self.assertEqual(State(base_dir), manager.state)
             seed_db = manager.state[addons]
-            cursor.execute.assert_any_call('CREATE DATABASE "{}"'.format(seed_db))
+            cursor.execute.assert_any_call(
+                SQL("CREATE DATABASE {}").format(Identifier(seed_db))
+            )
 
             self.assertTrue(os.path.isfile(start_odoo_out))
             self.assertTrue(os.path.isfile(python_odoo_out))
@@ -153,9 +199,13 @@ class TestTestherp(TestCase):
             self.assertNotIn("TESTHERP_BUFFER=1\n", py_odoo_env)
 
             cursor.execute.assert_any_call(
-                'CREATE DATABASE "{}" WITH TEMPLATE "{}"'.format(temp_db, seed_db)
+                SQL("CREATE DATABASE {} WITH TEMPLATE {}").format(
+                    Identifier(temp_db), Identifier(seed_db)
+                )
             )
-            cursor.execute.assert_any_call('DROP DATABASE "{}"'.format(temp_db))
+            cursor.execute.assert_any_call(
+                SQL("DROP DATABASE {}").format(Identifier(temp_db))
+            )
 
             self.assertEqual(len(start_odoo_args), 7)
             self.assertIn("bar,foo", start_odoo_args)
