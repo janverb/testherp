@@ -66,7 +66,7 @@ else:
 
 
 MYPY = False
-if MYPY:
+if MYPY:  # pragma: no cover
     import typing as t
     from typing import cast
 
@@ -89,7 +89,7 @@ else:
 
     _SpecList = list
 
-if MYPY and not PY3:
+if MYPY and not PY3:  # pragma: no cover
     # The Python 2 unittest typeshed is incomplete
     TextTestResult = t.Any
     TextTestRunner = t.Any
@@ -98,7 +98,7 @@ else:
     from unittest import TextTestRunner
 
 
-if MYPY:
+if MYPY:  # pragma: no cover
     import odoo
 elif os.environ.get("PYTHON_ODOO"):
     try:
@@ -110,7 +110,7 @@ else:
 
 
 class MarkedTestCase(unittest.TestCase):
-    def __init__(self):
+    def __init__(self):  # pragma: no cover
         # type: () -> None
         self._odooName = ("foo", "bar", "baz")
         raise TypeError("Not a real class, just for mypy")
@@ -125,12 +125,7 @@ blacklist = {
 }  # type: t.Dict[t.Union[t.Tuple[str, str], t.Tuple[str, str, str]], str]
 
 
-def _quote(identifier):
-    # type: (str) -> str
-    return '"{}"'.format(identifier.replace('"', '""'))
-
-
-class TestherpError(Exception):
+class UserError(Exception):
     pass
 
 
@@ -141,7 +136,7 @@ class Spec(object):
         # type: (str) -> None
         parts = specstr.split(".")
         if not 1 <= len(parts) <= 3 or not all(parts):
-            raise TestherpError("Malformed test spec {!r}".format(specstr))
+            raise UserError("Malformed test spec {!r}".format(specstr))
         self.addon = parts[0]
         self.module = parts[1] if len(parts) >= 2 else None
         self.method = parts[2] if len(parts) >= 3 else None
@@ -371,7 +366,7 @@ class OdooTextTestResult(TextTestResult):
         debugger = os.environ.get("TESTHERP_DEBUGGER")
         if debugger:
             exc_type, exc_value, exc_tb = err
-            if MYPY:
+            if MYPY:  # pragma: no cover
                 import pdb as dbg
             else:
                 dbg = importlib.import_module(debugger)
@@ -456,7 +451,7 @@ class ProcessManager(object):
         # type: (str, str) -> None
         self.base_dir = os.path.abspath(base_dir)
         if not os.path.isdir(self.base_dir):
-            raise TestherpError("Directory {!r} does not exist".format(self.base_dir))
+            raise UserError("Directory {!r} does not exist".format(self.base_dir))
         self.python_odoo = os.path.join(self.base_dir, "bin/python_odoo")
         self.start_odoo = os.path.join(self.base_dir, "bin/start_odoo")
         self.odoo_cfg = os.path.join(self.base_dir, "etc/odoo.cfg")
@@ -464,9 +459,7 @@ class ProcessManager(object):
             os.path.isfile(fname)
             for fname in [self.python_odoo, self.start_odoo, self.odoo_cfg]
         ):
-            raise TestherpError(
-                "{!r} is not a buildout directory".format(self.base_dir)
-            )
+            raise UserError("{!r} is not a buildout directory".format(self.base_dir))
 
         self.config = configparser.ConfigParser()
         self.config.read(self.odoo_cfg)
@@ -475,7 +468,7 @@ class ProcessManager(object):
 
         self.tests = SpecList.from_str(specs)
         if not self.tests:
-            raise TestherpError("No tests given")
+            raise UserError("No tests given")
 
         self.state = State(self.base_dir)
 
@@ -582,7 +575,7 @@ class ProcessManager(object):
         try:
             self.create_db(dbname, seed=seed_db)
         except psycopg2.Error:
-            raise TestherpError(
+            raise UserError(
                 "Can't create database from template, try running with --clean"
             )
         print("Created temporary database {}".format(dbname))
@@ -635,7 +628,7 @@ class ProcessManager(object):
                 + args
             )
             if proc.returncode:
-                raise TestherpError("Odoo failed with code {}".format(proc.returncode))
+                raise UserError("Odoo failed with code {}".format(proc.returncode))
             return proc
 
     def run_process(self, argv, env=None):
@@ -707,7 +700,7 @@ def main(argv=sys.argv[1:]):
     else:
         try:
             return testherp(argv)
-        except TestherpError as err:
+        except UserError as err:
             print("{}: error: {}".format(os.path.basename(sys.argv[0]), err))
             return 1
 

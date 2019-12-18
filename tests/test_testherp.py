@@ -11,7 +11,7 @@ from psycopg2.sql import Identifier, SQL
 
 import testherp
 
-from testherp import ProcessManager, Spec, SpecList, State, TestherpError, _quote
+from testherp import ProcessManager, Spec, SpecList, State, UserError
 
 PY3 = sys.version_info >= (3, 0)
 
@@ -37,6 +37,10 @@ class TestTestherp(TestCase):
         self.assertEqual(c.module, None)
         self.assertEqual(c.addon, "foo")
 
+        self.assertEqual(repr(a), "Spec('foo.bar.baz')")
+        self.assertEqual(repr(b), "Spec('foo.bar')")
+        self.assertEqual(repr(c), "Spec('foo')")
+
         self.assertNotEqual(a, b)
         self.assertNotEqual(b, c)
         self.assertNotEqual(a, c)
@@ -44,13 +48,13 @@ class TestTestherp(TestCase):
         for spec in a, b, c:
             self.assertEqual(spec, Spec(str(spec)))
 
-        with self.assertRaises(TestherpError):
+        with self.assertRaises(UserError):
             Spec("")
-        with self.assertRaises(TestherpError):
+        with self.assertRaises(UserError):
             Spec(".")
-        with self.assertRaises(TestherpError):
+        with self.assertRaises(UserError):
             Spec("foo..bar")
-        with self.assertRaises(TestherpError):
+        with self.assertRaises(UserError):
             Spec("foo.bar.baz.qux")
 
     def test_speclist(self):
@@ -70,15 +74,15 @@ class TestTestherp(TestCase):
         self.assertEqual(str(b), "foobar")
         self.assertEqual(str(c), "foo.bar,foo")
 
+        self.assertEqual(repr(a), "SpecList.from_str('foo.bar,baz.bar.qux')")
+        self.assertEqual(repr(b), "SpecList.from_str('foobar')")
+        self.assertEqual(repr(c), "SpecList.from_str('foo.bar,foo')")
+
         for speclist in a, b, c:
             self.assertEqual(speclist, SpecList.from_str(str(speclist)))
 
-        with self.assertRaises(TestherpError):
+        with self.assertRaises(UserError):
             SpecList.from_str("foo,bar,foo.bar.baz.qux")
-
-    def test_quoting(self):
-        self.assertEqual(_quote("foo"), '"foo"')
-        self.assertEqual(_quote('foo"bar"'), '"foo""bar"""')
 
     def test_state(self):
         with self.tempdir() as directory:
@@ -213,18 +217,18 @@ barqux = f
 
     def test_buildout_directory_validation(self):
         with self.tempdir() as directory:
-            with self.assertRaises(TestherpError):
+            with self.assertRaises(UserError):
                 ProcessManager(os.path.join(directory, "fake"), "foo,bar.baz")
 
-            with self.assertRaises(TestherpError):
+            with self.assertRaises(UserError):
                 ProcessManager(directory, "foo,bar.baz")
 
     def test_empty_tests_error(self):
         with self.buildoutdir() as (directory, connect):
-            with self.assertRaises(TestherpError):
+            with self.assertRaises(UserError):
                 ProcessManager(directory, "")
 
-            with self.assertRaises(TestherpError):
+            with self.assertRaises(UserError):
                 ProcessManager(directory, ",")
 
     @contextmanager
