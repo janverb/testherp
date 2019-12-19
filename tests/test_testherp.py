@@ -161,6 +161,8 @@ barqux = f
             connect.return_value.set_isolation_level.assert_called_once_with(
                 ISOLATION_LEVEL_AUTOCOMMIT
             )
+            cursor = connect.return_value.cursor.return_value.__enter__.return_value
+            cursor.fetchall = lambda: []
             manager.run_tests(
                 clean=False,
                 update=False,
@@ -172,13 +174,15 @@ barqux = f
                 buffer=False,
             )
             connect.return_value.cursor.assert_called_with()
-            cursor = connect.return_value.cursor.return_value.__enter__.return_value
             self.assertIn(addons, manager.state)
             self.assertEqual(len(manager.state), 1)
             self.assertEqual(State(base_dir), manager.state)
             seed_db = manager.state[addons]
             cursor.execute.assert_any_call(
                 SQL("CREATE DATABASE {}").format(Identifier(seed_db))
+            )
+            cursor.execute.assert_any_call(
+                SQL("SELECT 1 FROM pg_database WHERE datname = %s LIMIT 1"), [seed_db]
             )
 
             self.assertTrue(os.path.isfile(start_odoo_out))

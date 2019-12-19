@@ -89,14 +89,6 @@ else:
 
     _SpecList = list
 
-if MYPY and not PY3:  # pragma: no cover
-    # The Python 2 unittest typeshed is incomplete
-    TextTestResult = t.Any
-    TextTestRunner = t.Any
-else:
-    from unittest import TextTestResult
-    from unittest import TextTestRunner
-
 
 if MYPY:  # pragma: no cover
     import odoo
@@ -342,7 +334,7 @@ class TestManager(object):
                 server.stop()
 
 
-class OdooTextTestResult(TextTestResult):
+class OdooTextTestResult(unittest.TextTestResult):
     """Format tests as Specs and launch a debugger when appropriate."""
 
     def getDescription(self, test):
@@ -387,7 +379,7 @@ class OdooTextTestResult(TextTestResult):
         super(OdooTextTestResult, self).stopTest(test)
 
 
-class OdooTextTestRunner(TextTestRunner):
+class OdooTextTestRunner(unittest.TextTestRunner):
     resultclass = OdooTextTestResult
 
 
@@ -507,6 +499,14 @@ class ProcessManager(object):
         with self.database.cursor() as cr:
             cr.execute(SQL("DROP DATABASE {}").format(Identifier(dbname)))
 
+    def exists_db(self, dbname):
+        # type: (str) -> bool
+        with self.database.cursor() as cr:
+            cr.execute(
+                SQL("SELECT 1 FROM pg_database WHERE datname = %s LIMIT 1"), [dbname]
+            )
+            return bool(cr.fetchall())
+
     def run_tests(self, clean, update, verbosity, debugger, **flags):
         # type: (bool, bool, int, str, bool) -> int
         self.ensure_db(clean=clean, update=update)
@@ -519,6 +519,11 @@ class ProcessManager(object):
         addons = self.tests.addons()
         if addons in self.state:
             dbname = self.state[addons]
+        else:
+            dbname = "testherp-seed-{}".format(uuid.uuid4())
+            self.state[addons] = dbname
+
+        if self.exists_db(dbname):
             if clean:
                 try:
                     self.drop_db(dbname)
@@ -532,15 +537,25 @@ class ProcessManager(object):
                 return
             else:
                 return
-        else:
-            dbname = "testherp-seed-{}".format(uuid.uuid4())
-            self.state[addons] = dbname
+
         self.create_db(dbname)
         print(
             "Created seed database {} for {}".format(dbname, ", ".join(sorted(addons)))
         )
         print("Installing Odoo (this may take a while)")
-        self.run_odoo(dbname, ["-i", ",".join(sorted(addons))])
+        try:
+            self.run_odoo(dbname, ["-i", ",".join(sorted(addons))])
+        except UserError:
+            try:
+                self.drop_db(dbname)
+            except BaseException:
+                print(
+                    "Could not delete {}, you should probably "
+                    "run with --clean next time".format(dbname)
+                )
+            else:
+                print("Deleted failed database {}".format(dbname))
+            raise
         print("Finished installing Odoo")
 
     def run_test_process(self, keep, server, failfast, buffer, verbosity, debugger):
