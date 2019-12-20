@@ -70,10 +70,9 @@ if MYPY:  # pragma: no cover
     import typing as t
     from typing import cast
 
-    _Err = t.Tuple[
-        t.Union[t.Type[BaseException], None],
-        t.Union[BaseException, None],
-        t.Union[types.TracebackType, None],
+    _Err = t.Union[
+        t.Tuple[t.Type[BaseException], BaseException, types.TracebackType],
+        t.Tuple[None, None, None],
     ]
     _SpecList = t.List[Spec]  # noqa: F821
     _SpecTuple = t.Union[t.Tuple[str], t.Tuple[str, str], t.Tuple[str, str, str]]
