@@ -20,14 +20,13 @@
 # - use warnings or print to stderr?
 # - support unittest flags (--catch, --locals)
 # - write more tests for testherp itself
-# - document .testherp file
+# - document .testherp.cfg file
 # - make --quiet suppress most of testherp's own output
 # - remember which tests failed last time (and the addon set/seed db they used?)
 # - excluding tests, e.g. "account,-account.test_account_all_l10n"
-# - --nuke to remove .testherp and drop the seed databases in it
+# - --nuke to remove .testherp.cfg and drop the seed databases in it
 #   - exclusive from other options?
 # - search upward for buildout directory
-# - detect when databases don't exist
 # - handle data_dir?
 
 from __future__ import print_function
@@ -38,9 +37,11 @@ import contextlib
 import csv
 import functools
 import importlib
+import itertools
 import os
 import random
 import signal
+import string
 import sys
 import tempfile
 import threading
@@ -101,8 +102,8 @@ else:
 
 
 class MarkedTestCase(unittest.TestCase):
-    def __init__(self):  # pragma: no cover
-        # type: () -> None
+    def __init__(self, methodName="runTest"):  # pragma: no cover
+        # type: (str) -> None
         self._odooName = ("foo", "bar", "baz")
         raise TypeError("Not a real class, just for mypy")
 
@@ -304,7 +305,7 @@ class TestManager(object):
                 orig_setup(self)
 
                 def skipper(*a, **k):
-                    # type: (t.Any, t.Any) -> None
+                    # type: (object, object) -> None
                     self.skipTest(
                         "The web server is disabled, run with --server to enable"
                     )
@@ -387,7 +388,7 @@ class State(object):
 
     def __init__(self, directory):
         # type: (str) -> None
-        self.fname = os.path.join(directory, ".testherp")
+        self.fname = os.path.join(directory, ".testherp.cfg")
         self.state = {}  # type: t.Dict[t.FrozenSet[str], str]
         if not os.path.isfile(self.fname):
             return
@@ -416,7 +417,7 @@ class State(object):
             raise ValueError(
                 "An entry for {} already exists".format(", ".join(sorted(addons)))
             )
-        if any(char.isspace() for char in dbname) or len(dbname) > 64:
+        if any(char.isspace() for char in dbname) or len(dbname) > 63:
             raise ValueError("{!r} is not a safe database name".format(dbname))
         with open(self.fname, "a") as f:
             f.write("{} = {}\n".format(",".join(sorted(addons)), dbname))
@@ -519,7 +520,7 @@ class ProcessManager(object):
         if addons in self.state:
             dbname = self.state[addons]
         else:
-            dbname = "testherp-seed-{}".format(uuid.uuid4())
+            dbname = self.generate_dbname(self.base_dir, addons)
             self.state[addons] = dbname
 
         if self.exists_db(dbname):
@@ -557,6 +558,47 @@ class ProcessManager(object):
             raise
         print("Finished installing Odoo")
 
+    def generate_dbname(self, base_dir, addons):
+        # type: (str, t.FrozenSet[str]) -> str
+
+        # It should be safe with LIKE and safe to paste unquoted into a shell
+        # _ is not technically LIKE-safe but the worst possibility is that we
+        # fetch too many results
+        allowed_chars = set(string.ascii_letters + string.digits + "_-.,")
+        dir_part = "".join(
+            char for char in os.path.basename(base_dir) if char in allowed_chars
+        )
+
+        addons_part = (
+            ",".join(sorted(addons))
+            if len(addons) <= 3
+            else "".join(addon[0] for addon in sorted(addons))
+        )
+        base_name = "testherp-seed-{}-{}".format(dir_part, addons_part)
+
+        # Database names are truncated at 63 characters
+        # Let's leave room for -XXXX for the seed serial, that ought to be
+        # enough for anyone
+        base_name = base_name[:58]
+
+        with self.database.cursor() as cr:
+            cr.execute(
+                SQL("SELECT datname FROM pg_database WHERE datname LIKE %s"),
+                [base_name + "%"],
+            )
+            existing = {row[0] for row in cr.fetchall()}  # type: t.Set[str]
+            if base_name not in existing:
+                dbname = base_name
+            else:
+                for n in itertools.count():
+                    dbname = "{}-{}".format(base_name, n)
+                    if dbname not in existing:
+                        break
+
+        assert not self.exists_db(dbname)
+
+        return dbname
+
     def run_test_process(self, keep, server, failfast, buffer, verbosity, debugger):
         # type: (bool, bool, bool, bool, int, t.Optional[str]) -> Popen[bytes]
         """Run an inferior process that executes the tests."""
@@ -585,7 +627,11 @@ class ProcessManager(object):
             # Saves about half a second, probably not worth exposing as a flag
             yield seed_db
             return
-        dbname = "testherp-temp-{}".format(uuid.uuid4())
+        dbname_base = seed_db
+        if dbname_base.startswith("testherp-seed-"):
+            dbname_base = "testherp-temp-" + dbname_base[len("testherp-seed-") :]
+        dbname_base = dbname_base[:50]  # Truncated at 63
+        dbname = "{}-{}".format(dbname_base, uuid.uuid4())
         try:
             self.create_db(dbname, seed=seed_db)
         except psycopg2.Error:

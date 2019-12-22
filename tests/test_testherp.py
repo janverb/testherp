@@ -86,7 +86,7 @@ class TestTestherp(TestCase):
 
     def test_state(self):
         with self.tempdir() as directory:
-            fname = os.path.join(directory, ".testherp")
+            fname = os.path.join(directory, ".testherp.cfg")
 
             state = State(directory)
             self.assertEqual(state.state, {})
@@ -178,6 +178,7 @@ barqux = f
             self.assertEqual(len(manager.state), 1)
             self.assertEqual(State(base_dir), manager.state)
             seed_db = manager.state[addons]
+            self.assertEqual(seed_db, "testherp-seed-buildoutdir-bar,foo")
             cursor.execute.assert_any_call(
                 SQL("CREATE DATABASE {}").format(Identifier(seed_db))
             )
@@ -197,6 +198,7 @@ barqux = f
             self.assertEqual(len(py_odoo_args), 3)
             self.assertEqual(py_odoo_args[0], testherp.__file__)
             temp_db = py_odoo_args[1]
+            self.assertTrue(temp_db.startswith("testherp-temp-buildoutdir-bar,foo-"))
             self.assertEqual(py_odoo_args[2], "foo,bar.baz")
 
             self.assertIn("PYTHON_ODOO=1\n", py_odoo_env)
@@ -247,6 +249,6 @@ barqux = f
     def buildoutdir(self):
         src = os.path.join(os.path.dirname(__file__), "buildoutdir")
         with mock.patch("psycopg2.connect") as connect, self.tempdir() as parent_dir:
-            dst = os.path.join(parent_dir, "buildout")
+            dst = os.path.join(parent_dir, "buildoutdir")
             shutil.copytree(src, dst)
             yield dst, connect
