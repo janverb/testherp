@@ -146,7 +146,17 @@ barqux = f
             )
 
     def test_process_manager(self):
-        with self.buildoutdir() as (base_dir, connect):
+
+        cursor = mock.Mock(["__enter__", "__exit__", "execute", "fetchall"])
+        cursor.__enter__ = mock.Mock(return_value=cursor)
+        cursor.__exit__ = mock.Mock(return_value=None)
+        cursor.execute = mock.Mock(return_value=None)
+        cursor.fetchall = mock.Mock(return_value=[])
+        connection = mock.Mock(["cursor", "set_isolation_level"])
+        connection.cursor = mock.Mock(return_value=cursor)
+        connect = mock.Mock(return_value=connection)
+
+        with mock.patch("psycopg2.connect", connect), self.buildoutdir() as base_dir:
             addons = frozenset({"bar", "foo"})
             python_odoo_out = os.path.join(base_dir, "bin/python_odoo.called")
             start_odoo_out = os.path.join(base_dir, "bin/start_odoo.called")
@@ -158,11 +168,9 @@ barqux = f
             connect.assert_called_once_with(
                 host=None, port=None, user="test_user", password=None
             )
-            connect.return_value.set_isolation_level.assert_called_once_with(
+            connection.set_isolation_level.assert_called_once_with(
                 ISOLATION_LEVEL_AUTOCOMMIT
             )
-            cursor = connect.return_value.cursor.return_value.__enter__.return_value
-            cursor.fetchall = lambda: []
             manager.run_tests(
                 clean=False,
                 update=False,
@@ -173,7 +181,6 @@ barqux = f
                 failfast=True,
                 buffer=False,
             )
-            connect.return_value.cursor.assert_called_with()
             self.assertIn(addons, manager.state)
             self.assertEqual(len(manager.state), 1)
             self.assertEqual(State(base_dir), manager.state)
@@ -230,7 +237,7 @@ barqux = f
                 ProcessManager(directory, "foo,bar.baz")
 
     def test_empty_tests_error(self):
-        with self.buildoutdir() as (directory, connect):
+        with self.buildoutdir() as directory, mock.patch("psycopg2.connect"):
             with self.assertRaises(UserError):
                 ProcessManager(directory, "")
 
@@ -248,7 +255,7 @@ barqux = f
     @contextmanager
     def buildoutdir(self):
         src = os.path.join(os.path.dirname(__file__), "buildoutdir")
-        with mock.patch("psycopg2.connect") as connect, self.tempdir() as parent_dir:
+        with self.tempdir() as parent_dir:
             dst = os.path.join(parent_dir, "buildoutdir")
             shutil.copytree(src, dst)
-            yield dst, connect
+            yield dst
