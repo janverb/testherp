@@ -174,12 +174,12 @@ barqux = f
             manager.run_tests(
                 clean=False,
                 update=False,
-                verbosity=2,
-                debugger="pdb",
                 keep=False,
-                server=False,
-                failfast=True,
-                buffer=False,
+                env={
+                    "TESTHERP_FAILFAST": "1",
+                    "TESTHERP_DEBUGGER": "pdb",
+                    "TESTHERP_VERBOSITY": "2",
+                },
             )
             self.assertIn(addons, manager.state)
             self.assertEqual(len(manager.state), 1)

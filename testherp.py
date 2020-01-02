@@ -28,6 +28,7 @@
 #   - exclusive from other options?
 # - search upward for buildout directory
 # - handle data_dir?
+# - tell the user if a test can't be imported? (Odoo 8)
 
 from __future__ import print_function
 
@@ -84,7 +85,7 @@ if MYPY:  # pragma: no cover
     from anybox.recipe.odoo.runtime.session import Session as _Session
 else:
 
-    def cast(typ, val):
+    def cast(_type, val):
         return val
 
     _SpecList = list
@@ -105,6 +106,7 @@ class MarkedTestCase(unittest.TestCase):
     def __init__(self, methodName="runTest"):  # pragma: no cover
         # type: (str) -> None
         self._odooName = ("foo", "bar", "baz")
+        super(MarkedTestCase, self).__init__(methodName)
         raise TypeError("Not a real class, just for mypy")
 
 
@@ -152,12 +154,7 @@ class Spec(object):
 
     def __eq__(self, other):
         # type: (object) -> bool
-        return (
-            isinstance(other, Spec)
-            and self.addon == other.addon
-            and self.module == other.module
-            and self.method == other.method
-        )
+        return isinstance(other, Spec) and self.as_tuple() == other.as_tuple()
 
 
 class SpecList(_SpecList):
@@ -304,7 +301,7 @@ class TestManager(object):
                 # type: (t.Any) -> None
                 orig_setup(self)
 
-                def skipper(*a, **k):
+                def skipper(*_a, **_k):
                     # type: (object, object) -> None
                     self.skipTest(
                         "The web server is disabled, run with --server to enable"
@@ -357,7 +354,7 @@ class OdooTextTestResult(unittest.TextTestResult):
         # type: (_Err) -> None
         debugger = os.environ.get("TESTHERP_DEBUGGER")
         if debugger:
-            exc_type, exc_value, exc_tb = err
+            _exc_type, exc_value, exc_tb = err
             if MYPY:  # pragma: no cover
                 import pdb as dbg
             else:
@@ -444,17 +441,14 @@ class ProcessManager(object):
         self.base_dir = os.path.abspath(base_dir)
         if not os.path.isdir(self.base_dir):
             raise UserError("Directory {!r} does not exist".format(self.base_dir))
-        self.python_odoo = os.path.join(self.base_dir, "bin/python_odoo")
-        self.start_odoo = os.path.join(self.base_dir, "bin/start_odoo")
-        self.odoo_cfg = os.path.join(self.base_dir, "etc/odoo.cfg")
         if not all(
-            os.path.isfile(fname)
-            for fname in [self.python_odoo, self.start_odoo, self.odoo_cfg]
+            os.path.isfile(self.file_path(fname))
+            for fname in ["bin/python_odoo", "bin/start_odoo", "etc/odoo.cfg"]
         ):
             raise UserError("{!r} is not a buildout directory".format(self.base_dir))
 
         self.config = configparser.ConfigParser()
-        self.config.read(self.odoo_cfg)
+        self.config.read(self.file_path("etc/odoo.cfg"))
 
         self.database = self.connect_db()
 
@@ -463,6 +457,10 @@ class ProcessManager(object):
             raise UserError("No tests given")
 
         self.state = State(self.base_dir)
+
+    def file_path(self, fname):
+        # type: (str) -> str
+        return os.path.join(self.base_dir, fname)
 
     def connect_db(self):
         # type: () -> psycopg2.extensions.connection
@@ -507,10 +505,10 @@ class ProcessManager(object):
             )
             return bool(cr.fetchall())
 
-    def run_tests(self, clean, update, verbosity, debugger, **flags):
-        # type: (bool, bool, int, str, bool) -> int
+    def run_tests(self, clean, update, keep, env):
+        # type: (bool, bool, bool, t.Dict[str, str]) -> int
         self.ensure_db(clean=clean, update=update)
-        proc = self.run_test_process(verbosity=verbosity, debugger=debugger, **flags)
+        proc = self.run_test_process(keep=keep, env=env)
         return proc.returncode
 
     def ensure_db(self, clean, update):
@@ -553,6 +551,7 @@ class ProcessManager(object):
                     "Could not delete {}, you should probably "
                     "run with --clean next time".format(dbname)
                 )
+                raise
             else:
                 print("Deleted failed database {}".format(dbname))
             raise
@@ -564,7 +563,7 @@ class ProcessManager(object):
         # It should be safe with LIKE and safe to paste unquoted into a shell
         # _ is not technically LIKE-safe but the worst possibility is that we
         # fetch too many results
-        allowed_chars = set(string.ascii_letters + string.digits + "_-.,")
+        allowed_chars = set(string.ascii_letters + string.digits + "_-.,:/+=")
         dir_part = "".join(
             char for char in os.path.basename(base_dir) if char in allowed_chars
         )
@@ -599,23 +598,16 @@ class ProcessManager(object):
 
         return dbname
 
-    def run_test_process(self, keep, server, failfast, buffer, verbosity, debugger):
-        # type: (bool, bool, bool, bool, int, t.Optional[str]) -> Popen[bytes]
+    def run_test_process(self, keep, env):
+        # type: (bool, t.Dict[str, str]) -> Popen[bytes]
         """Run an inferior process that executes the tests."""
-        env = os.environ.copy()
-        env["PYTHON_ODOO"] = "1"
-        env["TESTHERP_VERBOSITY"] = str(verbosity)
-        if debugger:
-            env["TESTHERP_DEBUGGER"] = debugger
-        if server:
-            env["TESTHERP_SERVER"] = "1"
-        if failfast:
-            env["TESTHERP_FAILFAST"] = "1"
-        if buffer:
-            env["TESTHERP_BUFFER"] = "1"
+        new_env = os.environ.copy()
+        new_env["PYTHON_ODOO"] = "1"
+        new_env.update(env)
         with self.temp_db(keep=keep) as dbname:
             return self.run_process(
-                [self.python_odoo, __file__, dbname, str(self.tests)], env=env
+                [self.file_path("bin/python_odoo"), __file__, dbname, str(self.tests)],
+                env=new_env,
             )
 
     @contextlib.contextmanager
@@ -678,7 +670,7 @@ class ProcessManager(object):
             config_file.flush()
             proc = self.run_process(
                 [
-                    self.start_odoo,
+                    self.file_path("bin/start_odoo"),
                     "--stop-after-init",
                     "--database",
                     dbname,
@@ -707,8 +699,8 @@ class ProcessManager(object):
         return proc
 
 
-def testherp(argv=sys.argv[1:]):
-    # type: (t.List[str]) -> int
+def testherp():
+    # type: () -> int
     parser = argparse.ArgumentParser()
     arg = parser.add_argument
     toggle = functools.partial(arg, action="store_true")
@@ -726,7 +718,7 @@ def testherp(argv=sys.argv[1:]):
     toggle("-v", "--verbose", help="Verbose test output")
     toggle("-q", "--quiet", help="Minimal test output")
 
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
     if args.clean and args.update:
         print(
             "Warning: --clean and --update are mutually exclusive. "
@@ -735,21 +727,26 @@ def testherp(argv=sys.argv[1:]):
 
     debugger = "pdb" if args.pdb else args.debugger
 
+    env = {
+        "TESTHERP_VERBOSITY": str(1 + args.verbose - args.quiet),
+    }
+    if debugger:
+        env["TESTHERP_DEBUGGER"] = debugger
+    if args.server:
+        env["TESTHERP_SERVER"] = "1"
+    if args.failfast:
+        env["TESTHERP_FAILFAST"] = "1"
+    if args.buffer:
+        env["TESTHERP_BUFFER"] = "1"
+
     manager = ProcessManager(args.directory, ",".join(args.tests))
     return manager.run_tests(
-        clean=args.clean,
-        update=args.update,
-        server=args.server,
-        verbosity=1 + args.verbose - args.quiet,
-        debugger=debugger,
-        keep=args.keep,
-        failfast=args.failfast,
-        buffer=args.buffer,
+        clean=args.clean, update=args.update, keep=args.keep, env=env
     )
 
 
-def main(argv=sys.argv[1:]):
-    # type: (t.List[str]) -> int
+def main():
+    # type: () -> int
     if os.environ.get("PYTHON_ODOO"):
         assert len(sys.argv) == 3
         session_obj = session  # type: ignore  # noqa: F821
@@ -759,7 +756,7 @@ def main(argv=sys.argv[1:]):
         return manager.run_tests()
     else:
         try:
-            return testherp(argv)
+            return testherp()
         except UserError as err:
             print("{}: error: {}".format(os.path.basename(sys.argv[0]), err))
             return 1

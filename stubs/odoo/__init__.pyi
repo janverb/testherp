@@ -1,1 +1,1 @@
-from . import tests
+from . import modules, release, service, tests, tools
