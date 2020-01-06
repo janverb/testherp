@@ -628,7 +628,7 @@ class ProcessManager(object):
             self.create_db(dbname, seed=seed_db)
         except psycopg2.Error:
             raise UserError(
-                "Can't create database from template, try running with --clean"
+                "Can't create database from template, do you have another session open?"
             )
         print("Created temporary database {}".format(dbname))
         try:
