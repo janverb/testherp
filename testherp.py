@@ -295,29 +295,41 @@ class TestManager(object):
         # type: () -> t.Iterator[None]
         """Run a server in the background if enabled."""
         if not os.environ.get("TESTHERP_SERVER"):
-            orig_setup = odoo.tests.common.HttpCase.setUp
 
-            def new_setup(self):
+            def alter_setup_of(testclass):
                 # type: (t.Any) -> None
-                orig_setup(self)
+                def new_setup(self):
+                    # type: (t.Any) -> None
+                    orig_setup(self)
 
-                def skipper(*_a, **_k):
-                    # type: (object, object) -> None
-                    self.skipTest(
-                        "The web server is disabled, run with --server to enable"
-                    )
+                    def skipper(*_a, **_k):
+                        # type: (object, object) -> None
+                        self.skipTest(
+                            "The web server is disabled, run with --server to enable"
+                        )
 
-                self.url_open = skipper
-                self.phantom_run = skipper
-                if hasattr(self, "opener"):
-                    self.opener.open = skipper
-                    self.opener.get = skipper
-                    self.opener.post = skipper
-                for attr in "xmlrpc_common", "xmlrpc_object", "xmlrpc_db":
-                    if hasattr(self, attr):
-                        getattr(self, attr)._ServerProxy__request = skipper
+                    self.url_open = skipper
+                    self.phantom_run = skipper
+                    self.phantom_js = skipper
+                    if hasattr(self, "opener"):
+                        self.opener.open = skipper
+                        self.opener.get = skipper
+                        self.opener.post = skipper
+                    for attr in "xmlrpc_common", "xmlrpc_object", "xmlrpc_db":
+                        if hasattr(self, attr):
+                            getattr(self, attr)._ServerProxy__request = skipper
 
-            odoo.tests.common.HttpCase.setUp = new_setup  # type: ignore
+                orig_setup = testclass.setUp
+                testclass.setUp = new_setup
+
+            alter_setup_of(odoo.tests.common.HttpCase)
+
+            try:
+                alter_setup_of(
+                    odoo.addons.base_test_chrome.common.HttpCase  # type: ignore
+                )
+            except AttributeError:
+                pass
 
             yield None
         else:
