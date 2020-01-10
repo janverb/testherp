@@ -29,6 +29,7 @@
 # - search upward for buildout directory
 # - handle data_dir?
 # - tell the user if a test can't be imported? (Odoo 8)
+# - unify all the monkeypatching into some snazzy decorator
 
 from __future__ import print_function
 
@@ -264,6 +265,8 @@ class TestManager(object):
         runner = OdooTextTestRunner(
             verbosity=verbosity, failfast=failfast, buffer=buffer
         )
+        if os.environ.get("TESTHERP_DEBUGGER"):
+            self.patch_transactioncase_cleanup()
         with self.run_server():
             result = runner.run(suite)
             return min(len(result.errors) + len(result.failures), 125)
@@ -341,6 +344,56 @@ class TestManager(object):
                 yield
             finally:
                 server.stop()
+
+    def patch_transactioncase_cleanup(self):
+        # type: () -> None
+        """Patch TransactionCase to let us start a debugger before the cleanup.
+
+        ``TransactionCase.setUp`` uses ``TestCase.addCleanup`` to close the
+        cursor after a test run. Cleanup functions are run pretty much
+        immediately after the test, or even after ``setUp`` fails, so there's
+        no good way to interject before that.
+
+        Instead we patch ``setUp`` and ``run`` to delay just that cleanup
+        until after the test run, when we're finished messing around.
+        """
+        TransactionCase = odoo.tests.common.TransactionCase
+
+        orig_setup = TransactionCase.setUp
+
+        def setUp(self):
+            # type: (t.Any) -> None
+            orig_setup(self)
+
+            if not getattr(self, "_cleanups", False):
+                return
+
+            self.__deferred = []
+
+            for ind, (function, args, kwargs) in enumerate(self._cleanups):
+                if function.__name__ == "reset" and not args and not kwargs:
+
+                    def deferred_reset(real_reset=function):
+                        # type: (t.Callable[[], None]) -> None
+                        self.__deferred.append(real_reset)
+
+                    self._cleanups[ind] = (deferred_reset, args, kwargs)
+
+        TransactionCase.setUp = setUp  # type: ignore
+
+        orig_run = TransactionCase.run
+
+        def run(self, *args, **kwargs):
+            # type: (t.Any, t.Any, t.Any) -> None
+            try:
+                orig_run(self, *args, **kwargs)
+            finally:
+                # if setUp throws then __deferred may not exist
+                while getattr(self, "__deferred", False):
+                    func = self.__deferred.pop()
+                    func()
+
+        TransactionCase.run = run  # type: ignore
 
 
 class OdooTextTestResult(unittest.TextTestResult):
