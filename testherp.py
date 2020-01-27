@@ -570,10 +570,10 @@ class ProcessManager(object):
             )
             return bool(cr.fetchall())
 
-    def run_tests(self, clean, update, keep, env):
-        # type: (bool, bool, bool, t.Dict[str, str]) -> int
+    def run_tests(self, clean, update, env):
+        # type: (bool, bool, t.Dict[str, str]) -> int
         self.ensure_db(clean=clean, update=update)
-        proc = self.run_test_process(keep=keep, env=env)
+        proc = self.run_test_process(env=env)
         return proc.returncode
 
     def ensure_db(self, clean, update):
@@ -638,7 +638,7 @@ class ProcessManager(object):
             if len(addons) <= 3
             else "".join(addon[0] for addon in sorted(addons))
         )
-        base_name = "testherp-seed-{}-{}".format(dir_part, addons_part)
+        base_name = "testherp-{}-{}".format(dir_part, addons_part)
 
         # Database names are truncated at 63 characters
         # Let's leave room for -XXXX for the seed serial, that ought to be
@@ -663,32 +663,29 @@ class ProcessManager(object):
 
         return dbname
 
-    def run_test_process(self, keep, env):
-        # type: (bool, t.Dict[str, str]) -> Popen[bytes]
+    def run_test_process(self, env):
+        # type: (t.Dict[str, str]) -> Popen[bytes]
         """Run an inferior process that executes the tests."""
         new_env = os.environ.copy()
         new_env["PYTHON_ODOO"] = "1"
         new_env.update(env)
-        with self.temp_db(keep=keep) as dbname:
+        with self.temp_db() as dbname:
             return self.run_process(
                 [self.file_path("bin/python_odoo"), __file__, dbname, str(self.tests)],
                 env=new_env,
             )
 
     @contextlib.contextmanager
-    def temp_db(self, keep=False, no_clone=False):
-        # type: (bool, bool) -> t.Iterator[str]
+    def temp_db(self, no_clone=False):
+        # type: (bool) -> t.Iterator[str]
         """Create a temporary database from the correct seed."""
         seed_db = self.state[self.tests.addons()]
         if no_clone:
             # Saves about half a second, probably not worth exposing as a flag
             yield seed_db
             return
-        dbname_base = seed_db
-        if dbname_base.startswith("testherp-seed-"):
-            dbname_base = "testherp-temp-" + dbname_base[len("testherp-seed-") :]
-        dbname_base = dbname_base[:50]  # Truncated at 63
-        dbname = "{}-{}".format(dbname_base, uuid.uuid4())
+        dbname_base = seed_db[:56]  # Truncated at 63
+        dbname = "{}-{}".format(dbname_base, str(uuid.uuid4())[:6])
         try:
             self.create_db(dbname, seed=seed_db)
         except psycopg2.Error:
@@ -699,13 +696,10 @@ class ProcessManager(object):
         try:
             yield dbname
         finally:
-            if keep:
-                print("Keeping database {}".format(dbname))
-            else:
-                try:
-                    self.drop_db(dbname)
-                except psycopg2.Error:
-                    print("Could not delete {}".format(dbname))
+            try:
+                self.drop_db(dbname)
+            except psycopg2.Error as err:
+                print("Could not delete {}: {}".format(dbname, err))
 
     def run_odoo(self, dbname, args, loglevel="warn"):
         # type: (str, t.List[str], str) -> Popen[bytes]
@@ -773,7 +767,6 @@ def testherp():
     arg("tests", nargs="+", help="Tests to run")
     toggle("-c", "--clean", help="Replace the seed database")
     toggle("-u", "--update", help="Update the seed database")
-    toggle("-k", "--keep", help="Don't delete the temporary database")
     toggle("-s", "--server", help="Run the web server while testing")
     toggle("-p", "--pdb", help="Launch pdb on failure or error")
     arg("-d", "--debugger", default=None, help="Launch a debugger on failure on error")
@@ -805,9 +798,7 @@ def testherp():
         env["TESTHERP_BUFFER"] = "1"
 
     manager = ProcessManager(args.directory, ",".join(args.tests))
-    return manager.run_tests(
-        clean=args.clean, update=args.update, keep=args.keep, env=env
-    )
+    return manager.run_tests(clean=args.clean, update=args.update, env=env)
 
 
 def main():

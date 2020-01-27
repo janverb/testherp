@@ -174,7 +174,6 @@ barqux = f
             manager.run_tests(
                 clean=False,
                 update=False,
-                keep=False,
                 env={
                     "TESTHERP_FAILFAST": "1",
                     "TESTHERP_DEBUGGER": "pdb",
@@ -185,7 +184,7 @@ barqux = f
             self.assertEqual(len(manager.state), 1)
             self.assertEqual(State(base_dir), manager.state)
             seed_db = manager.state[addons]
-            self.assertEqual(seed_db, "testherp-seed-buildoutdir-bar,foo")
+            self.assertEqual(seed_db, "testherp-buildoutdir-bar,foo")
             cursor.execute.assert_any_call(
                 SQL("CREATE DATABASE {}").format(Identifier(seed_db))
             )
@@ -205,7 +204,7 @@ barqux = f
             self.assertEqual(len(py_odoo_args), 3)
             self.assertEqual(py_odoo_args[0], testherp.__file__)
             temp_db = py_odoo_args[1]
-            self.assertTrue(temp_db.startswith("testherp-temp-buildoutdir-bar,foo-"))
+            self.assertTrue(temp_db.startswith("testherp-buildoutdir-bar,foo-"))
             self.assertEqual(py_odoo_args[2], "foo,bar.baz")
 
             self.assertIn("PYTHON_ODOO=1\n", py_odoo_env)

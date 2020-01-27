@@ -1,6 +1,6 @@
 `testherp` is a script that runs Odoo tests in a user-friendly manner. It manages databases for you and runs only the tests you tell it to, even on older Odoo versions. The output is easier to follow than the usual logs.
 
-`testherp.py` is a stand-alone script. You can copy it wherever you want or you can install it to `~/.local/bin` or similar with `pip3 install --user -e .`.
+`testherp.py` is a stand-alone script. You can copy it wherever you want or you can install it to `~/.local/bin` or similar with `pip install --user -e .`.
 
 Run it in a buildout directory with the tests you want to run as arguments.
 
@@ -54,15 +54,15 @@ It remembered that it still had a seed database for `letsencrypt`, and only ran 
 
 A test takes the form of `addon[.module[.method]]`. Examples of tests that `testherp` understands are `hr`, `base.test_ir_actions`, and `calendar.test_calendar.test_validation_error`.
 
-If you specify tests from multiple addons then a seed database will be created for that combination of addons. Tests that are incompatible with other addons may fail.
+If you specify tests from multiple addons then a seed database will be created for that combination of addons. Tests that are incompatible with other addons may fail, so you get the best results running tests from one addon at a time.
 
-If you want to start over with a fresh seed database, run it with `-c`/`--clean`. To update the tested addons in the seed database, use `-u`/`--update`. With `-k`/`--keep` the temporary database isn't dropped after the tests are done.
+If you want to start over with a fresh seed database, run it with `-c`/`--clean`. To update the tested addons in the seed database, use `-u`/`--update`.
 
-Running with `-p`/`--pdb` immediately starts a `pdb` post-mortem when a test fails.
+Running with `-p`/`--pdb` immediately starts a `pdb` post-mortem when a test fails. The cursor is kept alive, so you can still inspect the state and run experiments. You can use `-d`/`--debugger` to specify an alternative debugger, e.g. `-d ipdb`.
 
-`-v`/`--verbose` shows detailed output with each test as its own row instead of a tiny dot.
+`-v`/`--verbose` shows detailed output with each test as its own row instead of a tiny dot. `-q`/`--quiet` hides even the dots.
 
-`-s`/`--server` runs the web server during testing. Some tests need it, but it makes the testing harder to interrupt, so it's disabled by default.
+`-s`/`--server` runs the web server during testing. Some tests need it, but it makes the testing harder to interrupt and web tests take much longer, so it's disabled by default.
 
 # Why to use it
 
