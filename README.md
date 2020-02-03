@@ -8,10 +8,10 @@ Run it in a buildout directory with the tests you want to run as arguments.
 
 ```
 $ testherp letsencrypt
-Created seed database testherp-seed-odoo10-letsencrypt for letsencrypt
+Created seed database testherp-odoo10-letsencrypt for letsencrypt
 Installing Odoo (this may take a while)
 Finished installing Odoo
-Created temporary database testherp-temp-odoo10-letsencrypt-4df6bbf2-b50f-4258-8949-17c4d625eadf
+Created temporary database testherp-odoo10-letsencrypt-4df6bb
 F..............
 ======================================================================
 FAIL: letsencrypt.test_letsencrypt.test_altnames_parsing
@@ -40,7 +40,7 @@ Let's say you fixed the test and want to run it again. You can do:
 
 ```
 $ testherp letsencrypt.test_letsencrypt.test_altnames_parsing
-Created temporary database testherp-temp-oe_bvtherp-letsencrypt-58ac1959-d649-4881-9cd3-f90122ef735a
+Created temporary database testherp-odoo10-letsencrypt-58ac19
 .
 ----------------------------------------------------------------------
 Ran 1 test in 0.029s
@@ -48,7 +48,7 @@ Ran 1 test in 0.029s
 OK
 ```
 
-It remembered that it still had a seed database for `letsencrypt`, and only ran the requested test. The whole command took less than two seconds to run.
+It remembered that it still had a seed database for `letsencrypt`, and only ran the requested test.
 
 # Usage
 
