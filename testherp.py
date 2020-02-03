@@ -368,14 +368,14 @@ class TestManager(object):
             if not getattr(self, "_cleanups", False):
                 return
 
-            self.__deferred = []
+            self._deferred = []
 
             for ind, (function, args, kwargs) in enumerate(self._cleanups):
                 if function.__name__ == "reset" and not args and not kwargs:
 
                     def deferred_reset(real_reset=function):
                         # type: (t.Callable[[], None]) -> None
-                        self.__deferred.append(real_reset)
+                        self._deferred.append(real_reset)
 
                     self._cleanups[ind] = (deferred_reset, args, kwargs)
 
@@ -388,9 +388,9 @@ class TestManager(object):
             try:
                 orig_run(self, *args, **kwargs)
             finally:
-                # if setUp throws then __deferred may not exist
-                while getattr(self, "__deferred", False):
-                    func = self.__deferred.pop()
+                # if setUp throws then _deferred may not exist
+                while getattr(self, "_deferred", False):
+                    func = self._deferred.pop()
                     func()
 
         TransactionCase.run = run  # type: ignore
