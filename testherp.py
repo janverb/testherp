@@ -233,7 +233,16 @@ class TestManager(object):
         odoo.tools.config["test_tags"] = "-"
 
         # Avoid conflict with other instances
-        odoo.tools.config["http_port"] = random.randint(30000, 50000)
+        # TODO: Be smarter about this, conflicts are still possible
+        port = random.randint(30000, 50000)
+        odoo.tools.config["http_port"] = port
+        odoo.tools.config["xmlrpc_port"] = port
+        # The port for testing is taken from the config at module load time
+        odoo.tests.common.PORT = port
+        try:
+            odoo.addons.base_test_chrome.common.PORT = port  # type: ignore
+        except AttributeError:
+            pass
 
         # odoo.cli.server.start() does this, at least one test depends on it
         csv.field_size_limit(500 * 1024 * 1024)

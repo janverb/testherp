@@ -3,15 +3,15 @@ from typing import Any, Dict, Optional
 import sys
 import unittest
 
-PY3 = sys.version_info >= (3, 0)
-
-if PY3:
+if sys.version_info >= (3, 0):
     from urllib.request import OpenerDirector
 
     ServerProxy = Any
 else:
     from urllib2 import OpenerDirector
     from xmlrpclib import ServerProxy
+
+PORT: int
 
 class TreeCase(unittest.TestCase): ...
 class BaseCase(TreeCase): ...
