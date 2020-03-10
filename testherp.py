@@ -237,6 +237,15 @@ class TestManager(object):
         port = random.randint(30000, 50000)
         odoo.tools.config["http_port"] = port
         odoo.tools.config["xmlrpc_port"] = port
+
+        try:
+            # If there are no tests then odoo.tests may not be loaded
+            # Of course in that case it's all pointless anyway but this
+            # avoids a confusing crash
+            importlib.import_module("{}.tests".format(odoo.__name__))
+        except ImportError:
+            pass
+
         # The port for testing is taken from the config at module load time
         odoo.tests.common.PORT = port
         try:
