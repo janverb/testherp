@@ -652,7 +652,7 @@ class ProcessManager(object):
         )
 
         addons_part = (
-            ",".join(sorted(addons))
+            "-".join(sorted(addons))
             if len(addons) <= 3
             else "".join(addon[0] for addon in sorted(addons))
         )
