@@ -42,6 +42,7 @@ import importlib
 import itertools
 import os
 import random
+import re
 import signal
 import string
 import sys
@@ -226,6 +227,7 @@ class TestManager(object):
 
         # Odoo 10 gets confused if we don't do this
         odoo.tools.config["db_name"] = database
+        odoo.tools.config["dbfilter"] = "^" + re.escape(database) + "$"
         threading.currentThread().dbname = database  # type: ignore
 
         # "-" is an excluding tag that matches all tests
