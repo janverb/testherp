@@ -224,6 +224,9 @@ class TestManager(object):
         session.open(database)
         # Some tests run queries that block if there are other cursors
         session.cr.close()
+        # But in some environments it'll be closed again later and raise
+        # a pointless exception
+        session.cr.close = lambda *args: None  # type: ignore
 
         # Odoo 10 gets confused if we don't do this
         odoo.tools.config["db_name"] = database
